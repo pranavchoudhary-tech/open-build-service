@@ -531,6 +531,7 @@ jobs:
          at: .
       - run: *install_dependencies
       - run: *init_git_submodule
+      - run: *create_test_db
       - run: *bootstrap_old_test_suite
       - run:
           name: Run minitest test suite
