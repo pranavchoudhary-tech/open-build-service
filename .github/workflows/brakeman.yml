@@ -17,5 +17,5 @@ jobs:
     - name: Brakeman
       run: |
         cd src/api
-        brakeman -w3 --add-valid-ignored-warnings --remove-invalid-ignored-warnings || true
-        cat config/brakeman.ignore
+        brakeman -w3 -f json > brakeman.json || true
+        cat brakeman.json
