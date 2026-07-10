@@ -17,5 +17,5 @@ jobs:
     - name: Brakeman
       run: |
         cd src/api
-        brakeman -w3 -f json > brakeman.json || true
+        brakeman -f json > brakeman.json || true
         cat brakeman.json
