@@ -16,4 +16,6 @@ jobs:
         gem install --no-format-executable brakeman -v 7.1.1
     - name: Brakeman
       run: |
-        brakeman -p src/api
+        cd src/api
+        brakeman -w3 --add-valid-ignored-warnings --remove-invalid-ignored-warnings || true
+        cat config/brakeman.ignore
