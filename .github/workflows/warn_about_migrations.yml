@@ -26,7 +26,7 @@ jobs:
         uses: thollander/actions-comment-pull-request@v3
         if: ${{ hashFiles('migrations_artifacts/comment_text_migrations.txt') != '' }}
         with:
-          filePath: migrations_artifacts/comment_text_migrations.txt
+          file-path: migrations_artifacts/comment_text_migrations.txt
           pr_number: ${{ env.pr_number }}
           comment_tag: comment_about_migrations
 
@@ -34,7 +34,7 @@ jobs:
         uses: thollander/actions-comment-pull-request@v3
         if: ${{ hashFiles('migrations_artifacts/comment_text_db_schema.txt') != '' }}
         with:
-          filePath: migrations_artifacts/comment_text_db_schema.txt
+          file-path: migrations_artifacts/comment_text_db_schema.txt
           pr_number: ${{ env.pr_number }}
           comment_tag: comment_about_db_schema
 
@@ -42,7 +42,7 @@ jobs:
         uses: thollander/actions-comment-pull-request@v3
         if: ${{ hashFiles('migrations_artifacts/comment_text_data_schema.txt') != '' }}
         with:
-          filePath: migrations_artifacts/comment_text_data_schema.txt
+          file-path: migrations_artifacts/comment_text_data_schema.txt
           pr_number: ${{ env.pr_number }}
           comment_tag: comment_about_data_schema
 
