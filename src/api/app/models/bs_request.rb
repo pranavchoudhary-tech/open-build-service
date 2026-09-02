@@ -88,7 +88,14 @@ class BsRequest < ApplicationRecord
   validates :number, uniqueness: true
   validates_associated :bs_request_actions, message: ->(_, record) { record[:value].map { |r| r.errors.full_messages }.flatten.to_sentence }
 
-  before_validation :sanitize!, if: :sanitize?, on: :create
+  before_validation(on: :create) do
+    # apply default values
+    self.creator ||= User.session!.login
+    self.commenter ||= User.session!.login
+    self.state = :new
+    self.status = :new
+  end
+  before_validation :sanitize!, on: :create
   before_save :accept_staged_request
   before_save :assign_number
   after_create :notify
@@ -129,7 +136,7 @@ class BsRequest < ApplicationRecord
   def self.new_from_xml(xml)
     hashed = Xmlhash.parse(xml)
 
-    raise SaveError, 'Failed parsing the request xml' unless hashed
+    raise RequestSaveError, 'Failed parsing the request xml' unless hashed
 
     new_from_hash(hashed)
   end
@@ -204,7 +211,7 @@ class BsRequest < ApplicationRecord
       str = hashed.value('accept_at')
       request.accept_at = Time.parse(str) if str
       hashed.delete('accept_at')
-      raise SaveError, 'Auto accept time is in the past' if request.accept_at && request.accept_at < Time.now
+      raise RequestSaveError, 'Auto accept time is in the past' if request.accept_at && request.accept_at < Time.now
 
       # we do not support to import history anymore on purpose
       # would be all fake, but means also history gets lost when
@@ -274,14 +281,6 @@ class BsRequest < ApplicationRecord
 
   def set_ignore_delegate
     @ignore_delegate = true
-  end
-
-  def sanitize?
-    !@skip_sanitize
-  end
-
-  def skip_sanitize
-    @skip_sanitize = true
   end
 
   def check_creator
@@ -611,8 +610,6 @@ class BsRequest < ApplicationRecord
         params[:description_extension] = superseded_by.to_s
       when 'review', 'new'
         history = HistoryElement::RequestReopened
-      when 'deleted'
-        history = HistoryElement::RequestDeleted
       else
         raise "Unhandled state #{opts[:newstate]} for history"
       end
@@ -629,9 +626,9 @@ class BsRequest < ApplicationRecord
       user_review = reviews.where(by_user: reviewer.login).last
       # Set the by_group/project/package reviews to :new and destroy the user review
       if opts[:revert]
-        raise Review::NotFoundError unless user_review
+        raise ReviewNotFoundError unless user_review
         raise InvalidStateError, 'review is not in new state' unless user_review.state == :new
-        raise Review::NotFoundError, 'Not an assigned review' unless HistoryElement::ReviewAssigned.where(op_object_id: user_review.id).last
+        raise ReviewNotFoundError, 'Not an assigned review' unless HistoryElement::ReviewAssigned.where(op_object_id: user_review.id).last
 
         reassign_reviews(reviewer, opts)
 
@@ -703,7 +700,7 @@ class BsRequest < ApplicationRecord
 
       old_request_state = state
       review = find_review_for_opts(opts)
-      raise Review::NotFoundError unless review
+      raise ReviewNotFoundError unless review
 
       # Neither the state nor the reason is changing...
       return if review.state == new_review_state && review.reviewer == User.session!.login && review.reason == opts[:comment].to_s
@@ -771,7 +768,7 @@ class BsRequest < ApplicationRecord
   def setpriority(opts)
     permission_check_setpriority!
 
-    raise SaveError, "Illegal priority '#{opts[:priority]}'" unless opts[:priority].in?(VALID_REQUEST_PRIORITIES)
+    raise RequestSaveError, "Illegal priority '#{opts[:priority]}'" unless opts[:priority].in?(VALID_REQUEST_PRIORITIES)
 
     p = { request: self, user_id: User.session!.id, description_extension: "#{priority} => #{opts[:priority]}" }
     p[:comment] = opts[:comment] if opts[:comment]
@@ -921,16 +918,9 @@ class BsRequest < ApplicationRecord
   end
 
   def sanitize!
-    # apply default values, expand and do permission checks
-    self.creator ||= User.session!.login
-    self.commenter ||= User.session!.login
     # FIXME: Move permission checks to controller level
-    raise SaveError, 'Admin permissions required to set request creator to foreign user' unless self.creator == User.session!.login || User.admin_session?
-    raise SaveError, 'Admin permissions required to set request commenter to foreign user' unless self.commenter == User.session!.login || User.admin_session?
-
-    # ensure correct initial values, no matter what has been sent to us
-    self.state = :new
-    self.status = :new
+    raise RequestSaveError, 'Admin permissions required to set request creator to foreign user' unless creator == User.session!.login || User.admin_session?
+    raise RequestSaveError, 'Admin permissions required to set request commenter to foreign user' unless commenter == User.session!.login || User.admin_session?
 
     # expand release and submit request targets if not specified
     expand_targets
@@ -983,7 +973,7 @@ class BsRequest < ApplicationRecord
       newactions.concat(new_action)
     end
     # will become an empty request
-    raise MaintenanceHelper::MissingAction if newactions.empty? && oldactions.size == bs_request_actions.size
+    raise MissingAction if newactions.empty? && oldactions.size == bs_request_actions.size
 
     oldactions.each { |a| bs_request_actions.destroy(a) }
     newactions.each { |a| bs_request_actions << a }
@@ -1059,7 +1049,6 @@ class BsRequest < ApplicationRecord
     package_ids = bs_request_actions.pluck(:source_package_id, :target_package_id).flatten.uniq
     CannedResponse.where(package_id: package_ids)
   end
-
 
   private
 
@@ -1237,13 +1226,13 @@ class BsRequest < ApplicationRecord
   end
 
   def reassign_reviews(reviewer, opts, new_review = nil)
-    raise Review::NotFoundError unless opts[:by_group] || opts[:by_project] || opts[:by_package]
+    raise ReviewNotFoundError unless opts[:by_group] || opts[:by_project] || opts[:by_package]
 
     reviews_to_reassign = reviews.where(by_group: opts[:by_group]) if opts[:by_group]
     reviews_to_reassign = reviews.where(by_project: opts[:by_project], by_package: opts[:by_package]) if opts[:by_project] && opts[:by_package]
     reviews_to_reassign = reviews.where(by_project: opts[:by_project]) if opts[:by_project] && !opts[:by_package]
 
-    raise Review::NotFoundError unless reviews_to_reassign.any?
+    raise ReviewNotFoundError unless reviews_to_reassign.any?
 
     reviews_to_reassign.reverse_each do |review|
       if opts[:revert]
@@ -1304,6 +1293,7 @@ end
 #  description        :text(65535)
 #  number             :integer          uniquely indexed
 #  priority           :string           default("moderate")
+#  reviews_count      :integer          default(0), not null, indexed
 #  state              :string(255)      indexed
 #  status             :integer          indexed
 #  superseded_by      :integer          indexed
@@ -1318,6 +1308,7 @@ end
 #  index_bs_requests_on_created_at          (created_at)
 #  index_bs_requests_on_creator             (creator)
 #  index_bs_requests_on_number              (number) UNIQUE
+#  index_bs_requests_on_reviews_count       (reviews_count)
 #  index_bs_requests_on_staging_project_id  (staging_project_id)
 #  index_bs_requests_on_state               (state)
 #  index_bs_requests_on_status              (status)

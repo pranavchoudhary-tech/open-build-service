@@ -1,4 +1,4 @@
-# rubocop:disable Metrics/ClassLength
+# rubocop:disable-next Metrics/ClassLength
 class WorkflowArtifactsPerStepComponent < ApplicationComponent
   with_collection_parameter :artifacts_per_step
 
@@ -12,7 +12,7 @@ class WorkflowArtifactsPerStepComponent < ApplicationComponent
   end
 
   def call
-    parsed_artifacts = JSON.parse(artifacts).deep_symbolize_keys
+    parsed_artifacts = (artifacts.is_a?(Hash) ? artifacts : JSON.parse(artifacts)).deep_symbolize_keys
 
     case step
     when 'Workflow::Step::BranchPackageStep'
@@ -157,4 +157,3 @@ class WorkflowArtifactsPerStepComponent < ApplicationComponent
     repository[:paths].map { |path| "#{path[:target_project]}/#{path[:target_repository]}" }.to_sentence
   end
 end
-# rubocop:enable Metrics/ClassLength

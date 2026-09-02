@@ -31,7 +31,7 @@ class Project < ApplicationRecord
   after_rollback :reset_cache
   after_rollback :discard_cache
 
-  serialize :required_checks, type: Array
+  serialize :required_checks, type: Array, coder: YAML
 
   attr_accessor :commit_opts, :commit_user
 
@@ -95,13 +95,13 @@ class Project < ApplicationRecord
   accepts_nested_attributes_for :label_globals, allow_destroy: true
   has_many :assignments, through: :packages
   has_many :canned_responses, dependent: :nullify
+  has_one :vendor, dependent: :destroy
 
   default_scope { where.not('projects.id' => Relationship.forbidden_project_ids) }
 
   scope :filtered_for_list, lambda {
     where.not('projects.name rlike ?', ::Configuration.unlisted_projects_filter) if ::Configuration.unlisted_projects_filter.present?
   }
-
   scope :remote, -> { where('NOT ISNULL(projects.remoteurl)') }
   scope :local, -> { where('ISNULL(projects.remoteurl)') }
 
@@ -780,7 +780,7 @@ class Project < ApplicationRecord
           end
     if pkg.nil?
       # local project, but package may be in a linked remote one
-      opts[:allow_remote_packages] && Package.exists_on_backend?(name, self.name)
+      opts[:allow_remote_packages] && Package.exists_on_backend?(self.name, name)
     else
       pkg.project.check_access?
     end
@@ -1089,7 +1089,7 @@ class Project < ApplicationRecord
             release_package(pkg,
                             releasetarget.target_repository,
                             pkg.release_target_name(releasetarget.target_repository, time_now),
-                            { filter_source_repository: repo,
+                            { repository: repo,
                               setrelease: params[:setrelease],
                               manual: true,
                               comment: comment })
@@ -1367,15 +1367,14 @@ class Project < ApplicationRecord
   # Returns an ActiveRecord::Relation with all BsRequest that the project is somehow involved in
   def bs_requests
     review_ids = Review.where(project_id: id)
-                       .pluck(:bs_request_id)
+                       .select(:bs_request_id)
 
     action_ids = BsRequestAction.where(target_project_id: id)
                                 .or(BsRequestAction.where(source_project_id: id))
-                                .pluck(:bs_request_id)
+                                .select(:bs_request_id)
 
-    all_ids = (review_ids + action_ids).compact.uniq
-
-    BsRequest.left_outer_joins(:bs_request_actions, :reviews).where(id: all_ids).distinct
+    base = BsRequest.left_outer_joins(:bs_request_actions, :reviews)
+    base.where(id: review_ids).or(base.where(id: action_ids)).distinct
   end
 
   private

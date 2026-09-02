@@ -2,11 +2,6 @@ require 'xmlrpc/client'
 
 class IssueTracker < ApplicationRecord
   has_many :issues, dependent: :destroy
-
-  class NotFoundError < APIError
-    setup 'issue_tracker_not_found', 404, 'Issue Tracker not found'
-  end
-
   validates :name, :regex, :url, :kind, presence: true
   validates :name, :regex, uniqueness: { case_sensitive: true }
   validates :kind, inclusion: { in: %w[other bugzilla cve fate trac launchpad sourceforge github jira debbugs] }
@@ -47,7 +42,7 @@ class IssueTracker < ApplicationRecord
 
   def update_issues_github
     # must be like this "url = https://github.com/repos/#{self.owner}/#{self.name}/issues"
-    url = URI.parse("#{self.url}?since=#{self.issues_updated.to_time.iso8601}")
+    url = URI.parse("#{self.url}?since=#{issues_updated.to_time.iso8601}")
     mtime = Time.now
 
     response = follow_redirects(url)
@@ -62,9 +57,8 @@ class IssueTracker < ApplicationRecord
     parse_github_issues(ActiveSupport::JSON.decode(response.body))
 
     # we skip callbacks to avoid scheduling expensive jobs
-    # rubocop:disable Rails/SkipsModelValidations
+    # rubocop:disable-next Rails/SkipsModelValidations
     update_columns(issues_updated: mtime - 1.second)
-    # rubocop:enable Rails/SkipsModelValidations
   end
 
   def update_issues
@@ -89,9 +83,8 @@ class IssueTracker < ApplicationRecord
     if private_fetch_issues(ids)
       # don't use "last_change_time" from bugzilla, since we may have different clocks
       # and skip callbacks to avoid scheduling expensive jobs
-      # rubocop:disable Rails/SkipsModelValidations
+      # rubocop:disable-next Rails/SkipsModelValidations
       update_columns(issues_updated: @update_time_stamp)
-      # rubocop:enable Rails/SkipsModelValidations
       return true
     end
     false
@@ -278,9 +271,9 @@ class IssueTracker < ApplicationRecord
 
   def update_issues_bugzilla
     begin
-      result = bugzilla_server.search(bugzilla_args.merge(last_change_time: self.issues_updated))
+      result = bugzilla_server.search(bugzilla_args.merge(last_change_time: issues_updated))
     rescue Net::ReadTimeout, Errno::ECONNRESET
-      if (self.issues_updated + 2.days).past?
+      if (issues_updated + 2.days).past?
         # failures since two days?
         # => enforce a full update in small steps to avoid over load at bugzilla side
         enforced_update_all_issues?
@@ -294,9 +287,8 @@ class IssueTracker < ApplicationRecord
 
     # skip callbacks to avoid scheduling expensive jobs
 
-    # rubocop:disable Rails/SkipsModelValidations
+    # rubocop:disable-next Rails/SkipsModelValidations
     update_columns(issues_updated: @update_time_stamp)
-    # rubocop:enable Rails/SkipsModelValidations
   end
 
   def update_package_meta

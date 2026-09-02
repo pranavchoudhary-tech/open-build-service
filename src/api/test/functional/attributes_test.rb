@@ -1,5 +1,4 @@
 require File.expand_path(File.dirname(__FILE__) + '/..') + '/test_helper'
-require 'source_controller'
 
 class AttributeControllerTest < ActionDispatch::IntegrationTest
   fixtures :all
@@ -349,7 +348,8 @@ ription</description>
 
     # via remote link
     get '/source/RemoteInstance:home:tom/_attribute/OBS:Maintained'
-    assert_response :not_implemented
+    assert_response :not_found
+    assert_xml_tag tag: 'status', attributes: { code: 'remote_project' }
 
     # via group
     login_adrian

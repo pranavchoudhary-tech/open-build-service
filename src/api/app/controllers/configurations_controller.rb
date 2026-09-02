@@ -1,5 +1,3 @@
-require 'configuration'
-
 class ConfigurationsController < ApplicationController
   # Site-specific configuration is insensitive information, no login needed therefore
   before_action :require_admin, only: [:update]
@@ -65,7 +63,7 @@ class ConfigurationsController < ApplicationController
       @configuration.save!
       head :ok
     else
-      render xml: @configuration.errors, status: :unprocessable_entity
+      render xml: @configuration.errors, status: :unprocessable_content
     end
   end
 end

@@ -8,7 +8,9 @@ module Webui::RequestsFilter # rubocop:disable Metrics/ModuleLength
     SortBy.new(name: 'Newest to Oldest', value: 'newest', sql: 'number DESC'),
     SortBy.new(name: 'Oldest to Newest', value: 'oldest', sql: 'number'),
     SortBy.new(name: 'Most Comments', value: 'most_comments', sql: 'comments_count DESC'),
-    SortBy.new(name: 'Least Comments', value: 'least_comments', sql: 'comments_count')
+    SortBy.new(name: 'Least Comments', value: 'least_comments', sql: 'comments_count'),
+    SortBy.new(name: 'Most Reviews', value: 'most_reviews', sql: 'reviews_count DESC'),
+    SortBy.new(name: 'Least Reviews', value: 'least_reviews', sql: 'reviews_count')
   ].freeze
 
   def filter_requests
@@ -109,13 +111,22 @@ module Webui::RequestsFilter # rubocop:disable Metrics/ModuleLength
 
     return if @selected_filter['labels'].blank?
 
-    # Match bs_request records containing AT LEAST all selected labels
+    # Match bs_request records containing AT LEAST all selected labels.
+    #
+    # The "has all N labels" check is isolated in a derived subquery over the labels
+    # table rather than joining labels into @bs_requests and grouping the whole result.
+    # @bs_requests is already seeded with left_outer_joins(:bs_request_actions, :reviews)
+    # and .distinct; adding another one-to-many join plus GROUP BY/HAVING on top builds a
+    # wide cartesian intermediate and forces Kaminari's pagination count into a
+    # subquery-wrapped count. Filtering by an IN-subquery keeps the outer relation flat.
     target_labels = @selected_filter['labels']
-    @bs_requests = @bs_requests
-                   .joins(labels: :label_template)
-                   .where(label_templates: { name: target_labels })
-                   .group('bs_requests.id')
-                   .having('COUNT(DISTINCT label_templates.name) = ?', target_labels.size)
+    matching_request_ids = Label
+                           .joins(:label_template)
+                           .where(labelable_type: 'BsRequest', label_templates: { name: target_labels })
+                           .group(:labelable_id)
+                           .having('COUNT(DISTINCT label_templates.name) = ?', target_labels.size)
+                           .select(:labelable_id)
+    @bs_requests = @bs_requests.where(id: matching_request_ids)
   end
 
   def filter_search_text
@@ -125,7 +136,10 @@ module Webui::RequestsFilter # rubocop:disable Metrics/ModuleLength
     search_for_ids_options = { per_page: TEXT_SEARCH_MAX_RESULTS }
 
     if BsRequest.search_count(@selected_filter['search']) > TEXT_SEARCH_MAX_RESULTS
-      if @bs_requests.limit(TEXT_SEARCH_MAX_RESULTS + 1).count > TEXT_SEARCH_MAX_RESULTS
+      # De-group before counting: filter_labels may have added a GROUP BY, and calling
+      # .count on a grouped relation returns a Hash ({id => count}), which raises when
+      # compared against an Integer. unscope(:group) keeps this an Integer count.
+      if @bs_requests.unscope(:group).limit(TEXT_SEARCH_MAX_RESULTS + 1).count > TEXT_SEARCH_MAX_RESULTS
         flash.now[:error] = 'Your text search pattern matches too many results. Please, try again with a more restrictive search pattern.'
         @bs_requests = BsRequest.none
 

@@ -688,7 +688,7 @@ class BsRequestAction < ApplicationRecord
     # empty submission protection
     if action_type.in?(%i[submit maintenance_incident]) && target_package &&
        Package.exists_by_project_and_name(target_project, target_package, follow_project_links: false)
-      raise MaintenanceHelper::MissingAction unless contains_change?
+      raise MissingAction unless contains_change?
 
       return
     end
@@ -739,7 +739,7 @@ class BsRequestAction < ApplicationRecord
     sp = Package.find_by_project_and_name(source_project, source_package)
     if sp.nil?
       # either not there or read permission problem
-      if Package.exists_on_backend?(source_package, source_project)
+      if Package.exists_on_backend?(source_project, source_package)
         # user is not allowed to read the source, but when they can write
         # the target, the request creator (who must have permissions to read source)
         # wanted the target owner to review it

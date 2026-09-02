@@ -31,7 +31,7 @@ use strict;
 my $uploaddir = "$BSConfig::bsdir/upload";
 
 sub normalize_container {
-  my ($dir, $container, $writeblobs, $deletetar, $arch) = @_;
+  my ($dir, $container, $writeblobs, $deletetar, $arch, $isreprocheck) = @_;
 
   # sanity check
   die("must not delete container if blobs are not stored\n") if $deletetar && !$writeblobs;
@@ -41,15 +41,19 @@ sub normalize_container {
   die("container does not end in .tar\n") unless $containerinfo_file =~ s/\.tar$/\.containerinfo/;
   my $containerinfo_str = readstr("$dir/$containerinfo_file");
   my $containerinfo = JSON::XS::decode_json($containerinfo_str);
+  # overwrite 'file' entry, just in case
+  $containerinfo->{'file'} = $container;
 
   # do the normalization
   my $recompress;
   $recompress = 1 unless -f "$dir/$container.recompressed";
+  $recompress = undef if $isreprocheck;		# do not recompress again
   unlink("$dir/$container.recompressed");
   local *TAR;
   open(TAR, '<', "$dir/$container") || die("$dir/$container: $!\n");
   # overwrite manifest tags with tags from containerinfo
-  my ($tar, $mtime, $config, $config_id, $layercomp) = BSContar::normalize_container(\*TAR, $recompress, $containerinfo->{'tags'}, $uploaddir);
+  my ($tar, $mtime, $config, $config_id) = BSContar::normalize_container(\*TAR, $recompress, $containerinfo->{'tags'}, $uploaddir);
+  my $atts = BSContar::get_entry_attributes($tar);
   my ($md5, $sha256, $size) = BSContar::checksum_tar($tar);
  
   # split in blobs/manifest, write blob files
@@ -76,16 +80,12 @@ sub normalize_container {
     $config->{'variant'} = "v8" if $config->{'architecture'} eq 'arm64';
   }
   $containerinfo->{'govariant'} = $config->{'variant'} if $config->{'variant'};
-  # take zstd:chunked data from old layer compression
-  if ($layercomp && $containerinfo->{'layer_compression'} && !$recompress) {
-    my @oldlayercomp = @{$containerinfo->{'layer_compression'}};
-    for (@$layercomp) {
-      my $oldcomp = shift @oldlayercomp;
-      $_ = $oldcomp if $_ eq 'zstd' && $oldcomp && $oldcomp =~ /^zstd:chunked,/;
+  if (!$isreprocheck) {
+    for (qw{manifest_annotations config_mimetype config_annotations layer_mimetype layer_annotations layer_compression}) {
+      delete $containerinfo->{$_};
+      $containerinfo->{$_} = $atts->{$_} if $atts->{$_};
     }
   }
-  delete $containerinfo->{'layer_compression'};
-  $containerinfo->{'layer_compression'} = $layercomp if $layercomp && @$layercomp;
   BSRepServer::Containerinfo::writecontainerinfo("$dir/.$containerinfo_file", "$dir/$containerinfo_file", $containerinfo);
 
   if ($deletetar) {

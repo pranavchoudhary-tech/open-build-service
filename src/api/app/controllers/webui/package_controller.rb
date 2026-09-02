@@ -85,8 +85,6 @@ class Webui::PackageController < Webui::WebuiController
     @comments = @package.comments.includes(:user)
     @comment = Comment.new
 
-    @current_notification = handle_notification
-
     @services = @files.any? { |file| file['name'] == '_service' }
 
     respond_to do |format|
@@ -129,6 +127,8 @@ class Webui::PackageController < Webui::WebuiController
     respond_to do |format|
       format.js do
         if @package.update(package_details_params)
+          set_linkinfo
+          @failures = 0
           flash.now[:success] = 'Package was successfully updated.'
         else
           flash.now[:error] = 'Failed to update the package.'
@@ -155,10 +155,6 @@ class Webui::PackageController < Webui::WebuiController
     @users = [@project.users, @package.users].flatten.uniq
     @groups = [@project.groups, @package.groups].flatten.uniq
     @roles = Role.local_roles
-    if User.session && params[:notification_id]
-      @current_notification = Notification.find(params[:notification_id])
-      authorize @current_notification, :update?, policy_class: NotificationPolicy
-    end
     @current_request_action = BsRequestAction.find(params[:request_action_id]) if User.session && params[:request_action_id]
   end
 
@@ -404,9 +400,8 @@ class Webui::PackageController < Webui::WebuiController
             @results << parsed.results
             max_badness = parsed.badness.values.max
             @badness = max_badness if parsed.badness.present? && (max_badness > @badness)
-            # rubocop:disable Rails/DeprecatedActiveModelErrorsMethods
+            # rubocop:disable-next Rails/DeprecatedActiveModelErrorsMethods
             @errors += parsed.errors.values.sum
-            # rubocop:enable Rails/DeprecatedActiveModelErrorsMethods
             @warnings += parsed.warnings.values.sum
             @info += parsed.info.values.sum
           end
@@ -428,7 +423,7 @@ class Webui::PackageController < Webui::WebuiController
   end
 
   def package_params
-    params.require(:package).permit(:name, :title, :description)
+    params.require(:package).permit(:name, :title, :description, :scmsync)
   end
 
   def package_details_params
@@ -443,7 +438,8 @@ class Webui::PackageController < Webui::WebuiController
               :description,
               :url,
               :report_bug_url,
-              :anitya_ignore)
+              :anitya_ignore,
+              :scmsync)
   end
 
   def set_file_details
@@ -501,7 +497,7 @@ class Webui::PackageController < Webui::WebuiController
     linkinfo = @package.linkinfo
 
     return unless linkinfo && linkinfo['package'] && linkinfo['project']
-    return unless Package.exists_on_backend?(linkinfo['package'], linkinfo['project'])
+    return unless Package.exists_on_backend?(linkinfo['project'], linkinfo['package'])
 
     @linkinfo = { remote_project: linkinfo['project'], package: linkinfo['package'] }
   end

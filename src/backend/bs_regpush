@@ -177,6 +177,7 @@ sub calc_authrealm {
 sub blob_upload {
   my ($blobid, $upload_ent) = @_;
 
+  die("blob_updload: need a blobid\n") unless $blobid;
   my $size = $upload_ent->{'size'};
   return $blobid if blob_exists($blobid, $size);
   print "uploading layer $blobid... ";
@@ -444,6 +445,19 @@ sub reuse_cosign_manifest {
   return 1;
 }
 
+sub create_manifest_from_layer {
+  my ($oci, $subject, $layer_ent, $artifact_type) = @_;
+  my $config_ent = BSContar::make_empty_config_entry($oci, 'artifactType' => $artifact_type);
+  my $config_data = BSContar::create_config_data($config_ent, $oci);
+  my $layer_data = BSContar::create_layer_data($layer_ent, $oci);
+  my $mani = BSContar::create_dist_manifest_data($config_data, [ $layer_data ], $oci);
+  $mani->{'annotations'} = $layer_ent->{'annotations'} if $layer_ent->{'annotations'};
+  $mani->{'artifactType'} = $artifact_type if $artifact_type;
+  $mani->{'subject'} = $subject if $subject;
+  my $mani_json = BSContar::create_dist_manifest($mani);
+  return ($mani, $mani_json, $config_ent, $layer_ent);
+}
+
 sub cosign_upload_newbundle {
   my ($tag, $subject, @layer_ents) = @_;
   die("cosign_upload_newbundle: need a subject\n") unless $subject && $subject->{'digest'};
@@ -451,16 +465,9 @@ sub cosign_upload_newbundle {
   my @multimanifests;
   for my $layer_ent (@layer_ents) {
     die("not an v3 bundle\n") unless $layer_ent->{'mimetype'} eq $BSConSign::mt_cosign_bundle;
-    my $config_ent = BSContar::make_oci_empty_config_entry('artifactType' => $layer_ent->{'mimetype'});
-    my $config_data = BSContar::create_config_data($config_ent, $oci);
-    blob_upload($config_data->{'digest'}, $config_ent);
-    my $layer_data = BSContar::create_layer_data($layer_ent, $oci);
-    blob_upload($layer_data->{'digest'}, $layer_ent);
-    my $mani = BSContar::create_dist_manifest_data($config_data, [ $layer_data ], $oci);
-    $mani->{'annotations'} = $layer_ent->{'annotations'} if $layer_ent->{'annotations'};
-    $mani->{'artifactType'} = $layer_ent->{'mimetype'};
-    $mani->{'subject'} = $subject;
-    my $mani_json = BSContar::create_dist_manifest($mani);
+    my ($mani, $mani_json, $config_ent, $layer_ent) = create_manifest_from_layer($oci, $subject, $layer_ent, $layer_ent->{'mimetype'});
+    blob_upload($config_ent->{'blobid'}, $config_ent);
+    blob_upload($layer_ent->{'blobid'}, $layer_ent);
     manifest_upload($mani_json, undef, $mani->{'mediaType'});
     my $multimani = {
       'mediaType' => $mani->{'mediaType'},
@@ -555,7 +562,7 @@ sub get_all_tags {
     $r = JSON::XS::decode_json($r);
     push @regtags, @{$r->{'tags'} || []};
     last unless $replyheaders->{'link'};
-    die unless $replyheaders->{'link'} =~ /^<(\/v2\/.*)>/;
+    die("bad link: $replyheaders->{'link'}\n") unless $replyheaders->{'link'} =~ /^<(\/v2\/.*)>/;
     $param->{'uri'} = "$registryserver$1";
     $param->{'verbatim_uri'} = 1;
   }
@@ -577,7 +584,7 @@ sub get_all_repositories {
     my $r = BSRPC::rpc($param, \&JSON::XS::decode_json);
     push @repos, @{$r->{'repositories'}};
     last unless $replyheaders->{'link'};
-    die("Bad link: $replyheaders->{'link'}\n") unless $replyheaders->{'link'} =~ /^<(\/v2\/\S+)>/;
+    die("bad link: $replyheaders->{'link'}\n") unless $replyheaders->{'link'} =~ /^<(\/v2\/\S+)>/;
     $param->{'uri'} = "$registryserver$1";
     $param->{'verbatim_uri'} = 1;
   }
@@ -617,7 +624,7 @@ sub get_manifest_for_tag {
 }
 
 sub get_referrers {
-  my ($digest) = @_;
+  my ($digest, $artifacttype) = @_;
   my $replyheaders;
   my $param = {
     'uri' => "$registryserver/v2/$repository/referrers/$digest",
@@ -626,7 +633,9 @@ sub get_referrers {
     'timeout' => $registry_timeout,
     'toomanyrequests' => \&toomanyrequests,
   };
-  my $mani_json = BSRPC::rpc($param);
+  my @args;
+  push @args, "artifactType=$artifacttype" if $artifacttype;
+  my $mani_json = BSRPC::rpc($param, undef, @args);
   my $mani = JSON::XS::decode_json($mani_json);
   my $maniid = $replyheaders->{'docker-content-digest'};
   return ($mani, $maniid, $mani_json);
@@ -923,7 +932,7 @@ sub construct_container_tar {
     $tar[-1]->{'layer_compression'} = $comp if defined $comp;
   }
   push @tar, {'name' => 'manifest.json', 'data' => $manifest, 'mtime' => $mtime, 'size' => length($manifest)};
-  BSContar::set_layer_compression(\@tar, $containerinfo->{'layer_compression'}) if !$containerinfo->{'tar_blobcompression'} && $containerinfo->{'layer_compression'};
+  BSContar::set_entry_attributes(\@tar, $containerinfo);
   return (\@tar, $mtime);
 }
 
@@ -955,6 +964,7 @@ sub open_container_tar {
   if (($containerinfo->{'type'} || '') eq 'artifacthub') {
     ($tar, $mtime) = BSContar::container_from_artifacthub($containerinfo->{'artifacthubdata'});
   } elsif (!defined($file)) {
+    $containerinfo->{'blobdir'} = $blobdir;
     ($tar, $mtime) = construct_container_tar($containerinfo);
   } elsif (($containerinfo->{'type'} || '') eq 'helm') {
     ($tar, $mtime) = BSContar::container_from_helm($file, $containerinfo->{'config_json'}, $containerinfo->{'tags'});
@@ -1170,9 +1180,9 @@ if ($list_mode) {
       die("no such layer\n") unless $mani->{'layers'}->[$1];
       my $data = blob_fetch($mani->{'layers'}->[$1]->{'digest'});
       print $data;
-    } elsif ($ARGV[3] eq 'referrers') {
+    } elsif ($ARGV[3] eq 'referrers' || $ARGV[3] =~ /^referrers\@./) {
       die("need digest for referrers\n") unless $ARGV[2] =~ /^sha256:[0-9a-f]{64}$/;
-      my ($mani, $maniid, $mani_json) = get_referrers($ARGV[2]);
+      my ($mani, $maniid, $mani_json) = get_referrers($ARGV[2], substr($ARGV[3], 10));
       print "$mani_json\n" if $mani_json;
     } else {
       blob_download($ARGV[2], $ARGV[3]);

@@ -1,15 +1,7 @@
-require 'api_error'
-
 class Review < ApplicationRecord
-  include ActiveModel::Validations
-
-  class NotFoundError < APIError
-    setup 'review_not_found', 404, 'Review not found'
-  end
-
   VALID_REVIEW_STATES = %i[new declined accepted superseded obsoleted].freeze
 
-  belongs_to :bs_request, touch: true, optional: true
+  belongs_to :bs_request, touch: true, counter_cache: true, optional: true
   has_many :history_elements, -> { order(:created_at) }, class_name: 'HistoryElement::Review', foreign_key: :op_object_id
   has_many :history_elements_assigned, class_name: 'HistoryElement::ReviewAssigned', foreign_key: :op_object_id
   has_many :notifications, as: :notifiable, dependent: :delete_all
@@ -19,11 +11,14 @@ class Review < ApplicationRecord
   validates :by_user, length: { maximum: 250 }
   validates :by_group, length: { maximum: 250 }
   validates :by_project, length: { maximum: 250 }
+  validate  :invalid_by_project_name, if: :by_project?
   validates :by_package, length: { maximum: 250 }
+  validate  :invalid_by_package_name, if: :by_package?
   validates :reviewer, length: { maximum: 250 }
   validates :reason, length: { maximum: 65_534 }
 
   validates :user, presence: true, if: :by_user?
+  validates :by_user, comparison: { other_than: '_nobody_', message: '_nobody_ can not review' }, if: :by_user?
   validates :group, presence: true, if: :by_group?
   validates :project, presence: true, if: :by_project?, on: :create
   validates :package, presence: true, if: :by_package?, on: :create
@@ -34,7 +29,6 @@ class Review < ApplicationRecord
   # Validate the review is not assigned to a review which is already assigned to this review
   validate :validate_non_symmetric_assignment
   validate :validate_not_self_assigned
-  validates_with AllowedUserValidator
 
   belongs_to :user, optional: true
   belongs_to :group, optional: true
@@ -273,6 +267,14 @@ class Review < ApplicationRecord
   end
 
   private
+
+  def invalid_by_project_name
+    errors.add(:by_project, 'invalid name') unless Project.valid_name?(by_project)
+  end
+
+  def invalid_by_package_name
+    errors.add(:by_package, 'invalid name') unless Package.valid_name?(by_package)
+  end
 
   def event_parameters
     request_params = bs_request.send(:event_parameters)

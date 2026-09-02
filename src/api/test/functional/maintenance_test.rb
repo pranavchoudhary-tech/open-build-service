@@ -2,7 +2,6 @@
 # rubocop:disable Metrics/MethodLength
 # rubocop:disable Metrics/ClassLength
 require_relative '../test_helper'
-require 'source_controller'
 
 class MaintenanceTests < ActionDispatch::IntegrationTest
   fixtures :all
@@ -1075,7 +1074,7 @@ class MaintenanceTests < ActionDispatch::IntegrationTest
     pi.add_child('<issue id="0815" tracker="INVALID"/>') # invalid tracker
     put "/source/#{incident_project}/patchinfo/_patchinfo", params: pi.to_xml
     assert_response :not_found
-    assert_xml_tag tag: 'status', attributes: { code: 'tracker_not_found' }
+    assert_xml_tag tag: 'status', attributes: { code: 'issue_tracker_not_found' }
     # continue
     get "/source/#{incident_project}/patchinfo/_meta"
     assert_xml_tag(parent: { tag: 'build' }, tag: 'enable', attributes: { repository: nil, arch: nil })
